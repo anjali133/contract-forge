@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Multi-agent builder — test harness</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  textarea { width: 100%; height: 70px; font-family: inherit; font-size: 14px; padding: 8px; box-sizing: border-box; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-size: 13px; }
+  button { padding: 8px 16px; margin: 10px 0; cursor: pointer; font-size: 14px; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  .mismatch { color: #b00020; }
+  .ok { color: #067d17; }
+  h2 { font-size: 16px; margin-top: 28px; }
+</style>
+</head>
+<body>
+  <h1>Multi-agent builder</h1>
+  <p>Describe an app, review the generated contract, then build it.</p>
+
+  <label for="desc">Describe your app</label><br/>
+  <textarea id="desc">A library system with books and members who can borrow and return books</textarea><br/>
+  <button id="planBtn">1. Generate contract</button>
+
+  <h2>Contract</h2>
+  <pre id="contractOut">(not generated yet)</pre>
+
+  <button id="buildBtn" disabled>2. Build app from this contract</button>
+
+  <h2>Result</h2>
+  <pre id="buildOut">(not built yet)</pre>
+
+  <h2>History <button id="historyBtn" style="font-size:12px; padding:2px 8px;">Refresh</button></h2>
+  <pre id="historyOut">(not loaded yet)</pre>
+
+  <script>
+    let currentContract = null;
+    let currentGenerationId = null;
+
+    const contractOut = document.getElementById('contractOut');
+    const buildOut = document.getElementById('buildOut');
+    const buildBtn = document.getElementById('buildBtn');
+
+    document.getElementById('planBtn').onclick = async () => {
+      const description = document.getElementById('desc').value;
+      contractOut.textContent = 'Thinking...';
+      buildBtn.disabled = true;
+
+      try {
+        const res = await fetch('/api/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description })
+        });
+        const data = await res.json();
+        if (data.error) {
+          contractOut.textContent = 'Error: ' + data.error;
+          return;
+        }
+        currentContract = data.contract;
+        currentGenerationId = data.generationId;
+        contractOut.textContent = JSON.stringify(data.contract, null, 2);
+        buildBtn.disabled = false;
+      } catch (err) {
+        contractOut.textContent = 'Request failed: ' + err.message;
+      }
+    };
+
+    buildBtn.onclick = async () => {
+      buildOut.textContent = 'Building backend + frontend in parallel...';
+      try {
+        const res = await fetch('/api/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contract: currentContract, generationId: currentGenerationId })
+        });
+        const data = await res.json();
+        if (data.error) {
+          buildOut.textContent = 'Error: ' + data.error;
+          return;
+        }
+        const status = data.validation.passed
+          ? '<span class="ok">\u2713 Validator passed \u2014 frontend and backend match</span>'
+          : '<span class="mismatch">\u2717 Still mismatched after retries:\n' + data.validation.mismatches.join('\n') + '</span>';
+
+        buildOut.innerHTML =
+          'Files written to: ' + data.outputDir + '\n\n' +
+          'Files:\n' + data.fileList.join('\n') + '\n\n' +
+          'Attempts: ' + data.attempts + '\n\n' + status;
+
+        loadHistory();
+      } catch (err) {
+        buildOut.textContent = 'Request failed: ' + err.message;
+      }
+    };
+
+    async function loadHistory() {
+      const historyOut = document.getElementById('historyOut');
+      historyOut.textContent = 'Loading...';
+      try {
+        const res = await fetch('/api/history');
+        const data = await res.json();
+        if (data.error) {
+          historyOut.textContent = data.error;
+          return;
+        }
+        if (!data.generations.length) {
+          historyOut.textContent = '(no generations saved yet)';
+          return;
+        }
+        historyOut.textContent = data.generations
+          .map((g) => {
+            const status = g.validation
+              ? (g.validation.passed ? '\u2713 passed' : '\u2717 mismatched')
+              : '\u2014';
+            return `${new Date(g.createdAt).toLocaleString()}  [${g.status}]  ${g.appName || '(unnamed)'}  ${status}  (${g.attempts ?? 0} attempts)\n  "${g.description}"`;
+          })
+          .join('\n\n');
+      } catch (err) {
+        historyOut.textContent = 'Request failed: ' + err.message;
+      }
+    }
+
+    document.getElementById('historyBtn').onclick = loadHistory;
+    loadHistory();
+  </script>
+</body>
+</html>
